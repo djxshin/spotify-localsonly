@@ -22,8 +22,7 @@ export default function ArtistDiscovery() {
   const router = useRouter()
   const [city, setCity] = useState<string | null>(null)
   const [shouldFetch, setShouldFetch] = useState(false)
-  const [retryCount, setRetryCount] = useState(0)
-  const [refreshToken, setRefreshToken] = useState<string | null>(null)
+  const [authCode, setAuthCode] = useState<string | null>(null)
 
   useEffect(() => {
     const storedCity = localStorage.getItem('userCity')
@@ -41,67 +40,55 @@ export default function ArtistDiscovery() {
     
     // Clear the stored state
     localStorage.removeItem('spotify_auth_state')
-    
-    if (!code) {
-      // Only redirect if we haven't just returned from Spotify
-      if (!state) {
+
+    if (code) {
+      // Verify state if it exists
+      if (state && state !== storedState) {
+        console.error('State mismatch, possible CSRF attack')
         window.location.href = getSpotifyAuthUrl()
+        return
       }
-      return
-    }
 
-    // Verify the state parameter
-    if (state !== storedState) {
-      console.error('State mismatch, possible CSRF attack')
+      // Store the code and set shouldFetch
+      setAuthCode(code)
+      setShouldFetch(true)
+
+      // Clean up URL without triggering a refresh
+      window.history.replaceState({}, '', '/discover')
+    } else if (!authCode) {
+      // Only redirect if we don't have a code
       window.location.href = getSpotifyAuthUrl()
-      return
     }
-
-    // Remove code and state from URL without triggering a refresh
-    const newUrl = window.location.pathname
-    window.history.replaceState({}, '', newUrl)
-    
-    setShouldFetch(true)
-  }, [router])
+  }, [router, authCode])
 
   const { data, isLoading, error } = useSWR<{ 
     artists: Artist[], 
     refreshToken: string,
     expiresIn: number 
   }>(
-    shouldFetch ? () => {
-      if (city) {
-        if (refreshToken) {
-          return `/api/local-artists?refresh_token=${refreshToken}&city=${encodeURIComponent(city)}`
-        }
-        const urlParams = new URLSearchParams(window.location.search)
-        const code = urlParams.get("code")
-        if (code) {
-          return `/api/local-artists?code=${code}&city=${encodeURIComponent(city)}`
-        }
-      }
-      return null
-    } : null,
+    shouldFetch && city && authCode ? 
+      `/api/local-artists?code=${authCode}&city=${encodeURIComponent(city)}` : 
+      null,
     fetcher,
     {
-      onSuccess: (data) => {
-        if (data.refreshToken) {
-          setRefreshToken(data.refreshToken)
-        }
+      onSuccess: () => {
+        // Reset the fetch trigger after successful request
+        setShouldFetch(false)
       },
       onError: (err) => {
         console.error('SWR Error:', err)
-        setRefreshToken(null)
         if (err.message.includes('auth') || 
             err.message.includes('token') || 
             err.message.includes('client')) {
+          // Clear the stored code
+          setAuthCode(null)
+          setShouldFetch(false)
           window.location.href = getSpotifyAuthUrl()
         }
       },
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
-      shouldRetryOnError: false,
-      dedupingInterval: 10000 // Only retry every 10 seconds
+      shouldRetryOnError: false
     }
   )
 

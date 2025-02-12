@@ -16,8 +16,12 @@ export function getSpotifyAuthUrl() {
 
   const state = Math.random().toString(36).substring(7)
   
-  // Only set localStorage if we're in the browser
   if (typeof window !== 'undefined') {
+    // Clear any existing auth state
+    localStorage.removeItem('spotify_auth_state')
+    localStorage.removeItem('spotify_auth_code')
+    
+    // Set new state
     localStorage.setItem('spotify_auth_state', state)
   }
 
@@ -26,7 +30,7 @@ export function getSpotifyAuthUrl() {
     client_id: SPOTIFY_CLIENT_ID,
     scope,
     redirect_uri: SPOTIFY_REDIRECT_URI,
-    show_dialog: 'true',
+    show_dialog: 'false',
     state
   })
 

@@ -58,17 +58,10 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get("code")
   const city = searchParams.get("city")
-  const refreshToken = searchParams.get("refresh_token")
 
-  console.log('API Request:', { 
-    hasCode: !!code, 
-    hasRefreshToken: !!refreshToken,
-    city 
-  })
-
-  if (!code && !refreshToken) {
+  if (!code) {
     return NextResponse.json({ 
-      error: "Either authorization code or refresh token is required" 
+      error: "Authorization code is required" 
     }, { status: 400 })
   }
 
@@ -79,25 +72,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    let tokenData
-    try {
-      if (refreshToken) {
-        tokenData = await refreshSpotifyToken(refreshToken)
-      } else {
-        tokenData = await getSpotifyAccessToken(code!)
-      }
-    } catch (error) {
-      if (error instanceof Error && 
-         (error.message === 'Invalid authorization code' || 
-          error.message.includes('refresh token'))) {
-        return NextResponse.json({ 
-          error: "Authentication expired",
-          details: "Please authenticate with Spotify again"
-        }, { status: 401 })
-      }
-      throw error
-    }
-
+    const tokenData = await getSpotifyAccessToken(code)
     const topGenres = await getUserTopGenres(tokenData.accessToken)
     const localArtists = await getLocalArtists(tokenData.accessToken, city, topGenres)
 
@@ -127,6 +102,14 @@ export async function GET(request: Request) {
     })
   } catch (error) {
     console.error("Error in GET route:", error)
+    
+    if (error instanceof Error && error.message.includes('Invalid authorization code')) {
+      return NextResponse.json({ 
+        error: "Authentication expired",
+        details: "Please authenticate with Spotify again"
+      }, { status: 401 })
+    }
+
     return NextResponse.json({ 
       error: error instanceof Error ? error.message : "Failed to fetch artists"
     }, { status: 500 })
