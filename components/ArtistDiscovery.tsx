@@ -21,37 +21,89 @@ const placeholderImage = "data:image/svg+xml,%3Csvg width='200' height='200' xml
 export default function ArtistDiscovery() {
   const router = useRouter()
   const [city, setCity] = useState<string | null>(null)
+  const [shouldFetch, setShouldFetch] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
+  const [refreshToken, setRefreshToken] = useState<string | null>(null)
 
   useEffect(() => {
-    // Get city from localStorage on client side
     const storedCity = localStorage.getItem('userCity')
     setCity(storedCity)
     
     if (!storedCity) {
       router.push('/')
+      return
     }
-  }, [router])
 
-  const { data, isLoading, error } = useSWR<{ artists: Artist[] }>(
-    () => {
-      const urlParams = new URLSearchParams(window.location.search)
-      const code = urlParams.get("code")
-      if (code && city) {
-        return `/api/local-artists?code=${code}&city=${encodeURIComponent(city)}`
-      }
-      return null
-    },
-    fetcher
-  )
-
-  useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const code = urlParams.get("code")
-
+    const state = urlParams.get("state")
+    const storedState = localStorage.getItem('spotify_auth_state')
+    
+    // Clear the stored state
+    localStorage.removeItem('spotify_auth_state')
+    
     if (!code) {
-      window.location.href = getSpotifyAuthUrl()
+      // Only redirect if we haven't just returned from Spotify
+      if (!state) {
+        window.location.href = getSpotifyAuthUrl()
+      }
+      return
     }
-  }, [])
+
+    // Verify the state parameter
+    if (state !== storedState) {
+      console.error('State mismatch, possible CSRF attack')
+      window.location.href = getSpotifyAuthUrl()
+      return
+    }
+
+    // Remove code and state from URL without triggering a refresh
+    const newUrl = window.location.pathname
+    window.history.replaceState({}, '', newUrl)
+    
+    setShouldFetch(true)
+  }, [router])
+
+  const { data, isLoading, error } = useSWR<{ 
+    artists: Artist[], 
+    refreshToken: string,
+    expiresIn: number 
+  }>(
+    shouldFetch ? () => {
+      if (city) {
+        if (refreshToken) {
+          return `/api/local-artists?refresh_token=${refreshToken}&city=${encodeURIComponent(city)}`
+        }
+        const urlParams = new URLSearchParams(window.location.search)
+        const code = urlParams.get("code")
+        if (code) {
+          return `/api/local-artists?code=${code}&city=${encodeURIComponent(city)}`
+        }
+      }
+      return null
+    } : null,
+    fetcher,
+    {
+      onSuccess: (data) => {
+        if (data.refreshToken) {
+          setRefreshToken(data.refreshToken)
+        }
+      },
+      onError: (err) => {
+        console.error('SWR Error:', err)
+        setRefreshToken(null)
+        if (err.message.includes('auth') || 
+            err.message.includes('token') || 
+            err.message.includes('client')) {
+          window.location.href = getSpotifyAuthUrl()
+        }
+      },
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      shouldRetryOnError: false,
+      dedupingInterval: 10000 // Only retry every 10 seconds
+    }
+  )
 
   if (!city) return (
     <div className="bg-white rounded-lg shadow-md p-6 mb-8">
@@ -66,7 +118,6 @@ export default function ArtistDiscovery() {
   )
   
   if (error) {
-    console.error('Error loading artists:', error)
     return (
       <div className="bg-white rounded-lg shadow-md p-6 mb-8">
         <h2 className="text-xl font-semibold mb-4 text-red-600">Error</h2>

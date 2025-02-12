@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSpotifyAccessToken } from "@/utils/spotifyAuth"
+import { getSpotifyAccessToken, refreshSpotifyToken } from "@/utils/spotifyAuth"
 
 const placeholderImage = "data:image/svg+xml,%3Csvg width='200' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100%25' height='100%25' fill='%23f3f4f6'/%3E%3Ctext x='50%25' y='50%25' font-family='Arial' font-size='14' fill='%236b7280' text-anchor='middle' dy='.3em'%3EArtist%3C/text%3E%3C/svg%3E"
 
@@ -55,50 +55,55 @@ async function getLocalArtists(accessToken: string, city: string, genres: string
 }
 
 export async function GET(request: Request) {
-  if (!process.env.SPOTIFY_CLIENT_SECRET) {
-    console.error('Missing SPOTIFY_CLIENT_SECRET environment variable')
-    return NextResponse.json({ 
-      error: "Server configuration error",
-      details: "Missing required environment variables"
-    }, { status: 500 })
-  }
-
   const { searchParams } = new URL(request.url)
   const code = searchParams.get("code")
   const city = searchParams.get("city")
+  const refreshToken = searchParams.get("refresh_token")
 
-  console.log('API Request:', { code: code?.slice(0, 10) + '...', city })
+  console.log('API Request:', { 
+    hasCode: !!code, 
+    hasRefreshToken: !!refreshToken,
+    city 
+  })
 
-  if (!code || !city) {
-    console.log('Missing parameters:', { code: !!code, city: !!city })
+  if (!code && !refreshToken) {
     return NextResponse.json({ 
-      error: "Spotify authorization code and city are required" 
+      error: "Either authorization code or refresh token is required" 
+    }, { status: 400 })
+  }
+
+  if (!city) {
+    return NextResponse.json({ 
+      error: "City is required" 
     }, { status: 400 })
   }
 
   try {
-    console.log('Getting access token...')
-    const tokenResponse = await getSpotifyAccessToken(code)
-    console.log('Access token response:', {
-      success: !!tokenResponse.accessToken,
-      tokenLength: tokenResponse.accessToken?.length
-    })
-
-    if (!tokenResponse.accessToken) {
-      throw new Error('Failed to get access token')
+    let tokenData
+    try {
+      if (refreshToken) {
+        tokenData = await refreshSpotifyToken(refreshToken)
+      } else {
+        tokenData = await getSpotifyAccessToken(code!)
+      }
+    } catch (error) {
+      if (error instanceof Error && 
+         (error.message === 'Invalid authorization code' || 
+          error.message.includes('refresh token'))) {
+        return NextResponse.json({ 
+          error: "Authentication expired",
+          details: "Please authenticate with Spotify again"
+        }, { status: 401 })
+      }
+      throw error
     }
 
-    console.log('Getting top genres...')
-    const topGenres = await getUserTopGenres(tokenResponse.accessToken)
-    console.log('Top genres:', topGenres)
+    const topGenres = await getUserTopGenres(tokenData.accessToken)
+    const localArtists = await getLocalArtists(tokenData.accessToken, city, topGenres)
 
     if (!topGenres?.length) {
       throw new Error('No genres found')
     }
-
-    console.log('Getting local artists...')
-    const localArtists = await getLocalArtists(tokenResponse.accessToken, city, topGenres)
-    console.log('Local artists found:', localArtists?.length)
 
     if (!localArtists?.length) {
       return NextResponse.json({ 
@@ -115,27 +120,15 @@ export async function GET(request: Request) {
       spotifyUrl: artist.external_urls?.spotify
     }))
 
-    return NextResponse.json({ artists })
-  } catch (error) {
-    console.error("Error in GET route:", {
-      error,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
-    })
-    
-    // More specific error messages
-    let errorMessage = "Failed to fetch artists"
-    if (error instanceof Error) {
-      if (error.message.includes('access token')) {
-        errorMessage = "Failed to authenticate with Spotify"
-      } else if (error.message.includes('genres')) {
-        errorMessage = "Could not determine your music preferences"
-      }
-    }
-
     return NextResponse.json({ 
-      error: errorMessage,
-      details: error instanceof Error ? error.message : String(error)
+      artists,
+      refreshToken: tokenData.refreshToken,
+      expiresIn: tokenData.expiresIn
+    })
+  } catch (error) {
+    console.error("Error in GET route:", error)
+    return NextResponse.json({ 
+      error: error instanceof Error ? error.message : "Failed to fetch artists"
     }, { status: 500 })
   }
 }

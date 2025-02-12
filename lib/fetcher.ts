@@ -4,6 +4,8 @@ const fetcher = async (url: string) => {
   
   if (!res.ok) {
     const error = new Error(data.details || data.error || 'An error occurred')
+    error.info = data
+    error.status = res.status
     console.error('Fetch error:', { url, status: res.status, data })
     throw error
   }
