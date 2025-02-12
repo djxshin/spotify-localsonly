@@ -3,7 +3,10 @@ const fetcher = async (url: string) => {
   const data = await res.json()
   
   if (!res.ok) {
-    const error = new Error(data.details || data.error || 'An error occurred')
+    const error = new Error(data.details || data.error || 'An error occurred') as Error & {
+      info?: unknown
+      status?: number
+    }
     error.info = data
     error.status = res.status
     console.error('Fetch error:', { url, status: res.status, data })

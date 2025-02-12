@@ -19,7 +19,6 @@ export function getSpotifyAuthUrl() {
   if (typeof window !== 'undefined') {
     // Clear any existing auth state
     localStorage.removeItem('spotify_auth_state')
-    localStorage.removeItem('spotify_auth_code')
     
     // Set new state
     localStorage.setItem('spotify_auth_state', state)

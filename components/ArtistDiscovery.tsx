@@ -16,14 +16,20 @@ interface Artist {
   spotifyUrl: string
 }
 
+interface ArtistResponse {
+  artists: Artist[]
+  message?: string
+}
+
 const placeholderImage = "data:image/svg+xml,%3Csvg width='200' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100%25' height='100%25' fill='%23f3f4f6'/%3E%3Ctext x='50%25' y='50%25' font-family='Arial' font-size='14' fill='%236b7280' text-anchor='middle' dy='.3em'%3EArtist%3C/text%3E%3C/svg%3E"
 
 export default function ArtistDiscovery() {
   const router = useRouter()
   const [city, setCity] = useState<string | null>(null)
-  const [shouldFetch, setShouldFetch] = useState(false)
   const [authCode, setAuthCode] = useState<string | null>(null)
+  const [hasData, setHasData] = useState(false)
 
+  // Handle initial auth flow
   useEffect(() => {
     const storedCity = localStorage.getItem('userCity')
     setCity(storedCity)
@@ -33,11 +39,16 @@ export default function ArtistDiscovery() {
       return
     }
 
+    // Skip if we already have data or an auth code
+    if (hasData || authCode) {
+      return
+    }
+
     const urlParams = new URLSearchParams(window.location.search)
     const code = urlParams.get("code")
     const state = urlParams.get("state")
     const storedState = localStorage.getItem('spotify_auth_state')
-    
+
     // Clear the stored state
     localStorage.removeItem('spotify_auth_state')
 
@@ -49,48 +60,53 @@ export default function ArtistDiscovery() {
         return
       }
 
-      // Store the code and set shouldFetch
       setAuthCode(code)
-      setShouldFetch(true)
-
-      // Clean up URL without triggering a refresh
+      // Clean up URL immediately
       window.history.replaceState({}, '', '/discover')
-    } else if (!authCode) {
+    } else {
       // Only redirect if we don't have a code
       window.location.href = getSpotifyAuthUrl()
     }
-  }, [router, authCode])
+  }, [router]) // Remove hasData and authCode from dependencies
 
-  const { data, isLoading, error } = useSWR<{ 
-    artists: Artist[], 
-    refreshToken: string,
-    expiresIn: number 
-  }>(
-    shouldFetch && city && authCode ? 
+  // Handle data fetching
+  const { data, isLoading, error } = useSWR<ArtistResponse>(
+    authCode && city && !hasData ? 
       `/api/local-artists?code=${authCode}&city=${encodeURIComponent(city)}` : 
       null,
     fetcher,
     {
-      onSuccess: () => {
-        // Reset the fetch trigger after successful request
-        setShouldFetch(false)
+      onSuccess: (data) => {
+        if (data?.artists) {
+          setHasData(true)
+          // Clear auth code after successful fetch
+          setAuthCode(null)
+        }
       },
       onError: (err) => {
         console.error('SWR Error:', err)
+        setHasData(false)
+        setAuthCode(null)
         if (err.message.includes('auth') || 
             err.message.includes('token') || 
             err.message.includes('client')) {
-          // Clear the stored code
-          setAuthCode(null)
-          setShouldFetch(false)
           window.location.href = getSpotifyAuthUrl()
         }
       },
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
-      shouldRetryOnError: false
+      shouldRetryOnError: false,
+      revalidateIfStale: false,
+      dedupingInterval: 60000 // Prevent duplicate requests
     }
   )
+
+  // Reset state handler
+  const handleReset = () => {
+    setHasData(false)
+    setAuthCode(null)
+    window.location.href = getSpotifyAuthUrl()
+  }
 
   if (!city) return (
     <div className="bg-white rounded-lg shadow-md p-6 mb-8">
@@ -110,7 +126,7 @@ export default function ArtistDiscovery() {
         <h2 className="text-xl font-semibold mb-4 text-red-600">Error</h2>
         <p>{error.message}</p>
         <button 
-          onClick={() => window.location.href = getSpotifyAuthUrl()}
+          onClick={handleReset}
           className="mt-4 bg-indigo-500 text-white px-4 py-2 rounded hover:bg-indigo-600"
         >
           Try Again
